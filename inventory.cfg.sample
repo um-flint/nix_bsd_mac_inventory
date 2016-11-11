@@ -5,6 +5,7 @@ solaris  = True
 mac      = True
 bsd      = True
 aix      = True
+hpux	 = True
 
 [settings]
 # base_url points to your Device42 server
@@ -51,13 +52,16 @@ get_os_details     			= True
 get_cpu_info       			= True
 get_memory_info    			= True
 ignore_domain      			= False
+ignore_virtual_machines		= False
 upload_ipv6        			= True
 duplicate_serials  			= False
-remove_stale_ips			= False
-add_hdd_as_device_properties= False
-add_hdd_as_parts			= True
+remove_stale_ips			= True
 give_hostname_precedence	= True
+mac_lookup					= False
 debug              			= True
 threads            			= 50
 dict_output        			= False
-
+#Device properties doesn't handle asymmetrical disk configs well. Better handled in parts.
+add_hdd_as_device_properties= False 
+add_hdd_as_parts			= True
+add_nic_as_parts			= False

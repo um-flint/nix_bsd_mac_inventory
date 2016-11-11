@@ -1,14 +1,32 @@
+import os
 import ast
 import math
 
 import paramiko
 
+commands = ['cat /dev/null',
+            'dmidecode -V',
+            'fdisk -V',
+            'find --version',
+            'grep -V',
+            'hdparm -V',
+            'hostname',
+            'id',
+            'ifconfig -V',
+            'ip -V',
+            'lshal -V'
+            'python2 -h',
+            'python3 -V',
+            'sort --version'
+            'sudo -V',
+            'wc --version']
+
 
 class GetLinuxData:
     def __init__(self, base_url, username, secret, ip, ssh_port, timeout, usr, pwd, use_key_file, key_file,
-                 get_serial_info, add_hdd_as_device_properties, add_hdd_as_parts,
+                 get_serial_info, add_hdd_as_device_properties, add_hdd_as_parts, add_nic_as_parts,
                  get_hardware_info, get_os_details, get_cpu_info, get_memory_info,
-                 ignore_domain, upload_ipv6, give_hostname_precedence, debug):
+                 ignore_domain, ignore_virtual_machines, upload_ipv6, give_hostname_precedence, debug):
 
         self.d42_api_url = base_url
         self.d42_username = username
@@ -26,18 +44,23 @@ class GetLinuxData:
         self.get_cpu_info = get_cpu_info
         self.get_memory_info = get_memory_info
         self.ignore_domain = ignore_domain
+        self.ignore_virtual_machines = ignore_virtual_machines
         self.upload_ipv6 = upload_ipv6
         self.name_precedence = give_hostname_precedence
         self.add_hdd_as_devp = add_hdd_as_device_properties
+        self.add_hdd_as_devp = False # do not edit, take a look at the inventory.config.example for details
         self.add_hdd_as_parts = add_hdd_as_parts
+        self.add_nic_as_parts = add_nic_as_parts
         self.debug = debug
         self.root = True
         self.devicename = None
         self.disk_sizes = {}
         self.raids = {}
-        self.hdd_parts = {}
+        self.hdd_parts = []
+        self.nic_parts = []
         self.device_name = None
         self.os = None
+        self.paths = {}
 
         self.nics = []
         self.alldata = []
@@ -47,8 +70,14 @@ class GetLinuxData:
 
     def main(self):
         self.connect()
+        self.get_cmd_paths()
         self.are_u_root()
-        self.get_system()
+        if self.add_nic_as_parts:
+            self.nic_parts = self.get_physical_nics()
+            self.alldata.append(self.nic_parts)
+        dtype = self.get_system()
+        if dtype == 'virtual' and self.ignore_virtual_machines:
+            return self.alldata
         if self.get_memory_info:
             self.get_ram()
         if self.get_cpu_info:
@@ -60,7 +89,8 @@ class GetLinuxData:
         self.alldata.append(self.devargs)
         if self.add_hdd_as_parts:
             self.alldata.append({'hdd_parts': self.hdd_parts})
-
+        if self.add_nic_as_parts:
+            self.alldata.append({'nic_parts': self.nic_parts})
         return self.alldata
 
     def connect(self):
@@ -78,11 +108,38 @@ class GetLinuxData:
             print str(self.machine_name) + ': ' + str(err)
             return None
 
+    def get_cmd_paths(self):
+        search_paths = ['/usr/bin', '/bin', '/usr/local/bin', '/sbin', '/usr/sbin', '/usr/local/sbin']
+        for cmd_to_find in commands:
+            for search_path in search_paths:
+                cmd_path = "%s/%s" % (search_path, cmd_to_find)
+                data_out, data_err = self.execute(cmd_path, False)
+                if not data_err:
+                    self.paths.update({cmd_to_find.split()[0]: search_path})
+                    break
+                if 'command not found' in data_err:
+                    if self.debug:
+                        print '\t[-] Failed to find command "%s" at path "%s"' % (cmd_to_find, search_path)
+
+    def find_command_path(self, cmd_to_find):
+        search_paths = ['/usr/bin', '/bin', '/usr/local/bin', '/sbin', '/usr/sbin', '/usr/local/sbin']
+        for search_path in search_paths:
+            cmd_path = "%s/%s" % (search_path, cmd_to_find)
+            data_out, data_err = self.execute(cmd_path, False)
+            if not data_err:
+                self.paths.update({cmd_to_find:search_path})
+                return search_path
+            if 'command not found' in data_err:
+                if self.debug:
+                    print '\t[-] Failed to find command "%s" at path "%s"' % (cmd_to_find, search_path)
+
     def execute(self, cmd, needroot=False):
         if needroot:
             if self.root:
                 stdin, stdout, stderr = self.ssh.exec_command(cmd)
             else:
+                if 'sudo' in self.paths:
+                    cmd_sudo = "%s/sudo -S -p '' %s" % (self.paths['sudo'],cmd)
                 cmd_sudo = "sudo -S -p '' %s" % cmd
                 stdin, stdout, stderr = self.ssh.exec_command(cmd_sudo)
                 stdin.write('%s\n' % self.password)
@@ -90,8 +147,11 @@ class GetLinuxData:
         else:
             stdin, stdout, stderr = self.ssh.exec_command(cmd)
         data_err = stderr.readlines()
-        data_out = stdout.readlines()
-
+        try:
+            data_out = stdout.readlines()
+        except UnicodeDecodeError:
+            data_x = stdout.read()
+            data_out = data_x.split('\n')
         if data_err and 'sudo: command not found' in str(data_err):
             stdin, stdout, stderr = self.ssh.exec_command(cmd)
             data_err = stderr.readlines()
@@ -99,7 +159,10 @@ class GetLinuxData:
         return data_out, data_err
 
     def are_u_root(self):
-        cmd = 'id -u'
+        if 'id' in self.paths:
+            cmd = '%s/id -u' % self.paths['id']
+        else:
+            cmd = 'id -u'
         data, err = self.execute(cmd)
         if data[0].strip() == '0':
             self.root = True
@@ -128,7 +191,10 @@ class GetLinuxData:
         return int(v)
 
     def get_name(self):
-        cmd = '/bin/hostname'
+        if 'hostname' in self.paths:
+            cmd = '%s/hostname' % self.paths['hostname']
+        else:
+            cmd = 'hostname'
         data_out, data_err = self.execute(cmd)
         device_name = None
         if not data_err:
@@ -146,7 +212,10 @@ class GetLinuxData:
     def get_system(self):
         self.device_name = self.get_name()
         if self.device_name not in ('', None):
-            cmd = '/usr/sbin/dmidecode -t system'
+            if 'dmidecode' in self.paths:
+                cmd = '%s/dmidecode -t system' % self.paths['dmidecode']
+            else:
+                cmd = 'dmidecode -t system'
             data_out, data_err = self.execute(cmd, True)
             if not data_err:
                 dev_type = None
@@ -159,13 +228,18 @@ class GetLinuxData:
                             if manufacturer in ['VMware, Inc.', 'Bochs', 'KVM', 'QEMU',
                                                 'Microsoft Corporation', 'Xen', 'innotek GmbH']:
                                 dev_type = 'virtual'
-                                self.devargs.update({'type': dev_type})
+                                if self.ignore_virtual_machines and dev_type == 'virtual':
+                                    self.devargs.clear()
+                                    return 'virtual'
+                                else:
+                                    self.devargs.update({'type': dev_type})
                         if rec.startswith('UUID:'):
                             uuid = rec.split(':')[1].strip()
                             self.devargs.update({'uuid': uuid})
                         if rec.startswith('Serial Number:'):
                             serial = rec.split(':')[1].strip()
-                            self.devargs.update({'serial_no': serial})
+                            if self.get_serial_info:
+                                self.devargs.update({'serial_no': serial})
                         if rec.startswith('Product Name:') and dev_type != 'virtual':
                             hardware = rec.split(':')[1].strip()
                             self.devargs.update({'hardware': hardware})
@@ -176,7 +250,10 @@ class GetLinuxData:
                 self.get_system_2()
 
     def get_system_2(self):
-        cmd = "grep '' /sys/devices/virtual/dmi/id/*"
+        if 'grep' in self.paths:
+            cmd = "%s/grep '' /sys/devices/virtual/dmi/id/*" % self.paths['grep']
+        else:
+            cmd = "grep '' /sys/devices/virtual/dmi/id/*"
         data_out, data_err = self.execute(cmd, True)
         if data_out:
             dev_type = 'physical'
@@ -187,13 +264,18 @@ class GetLinuxData:
                     if manufacturer in ['VMware, Inc.', 'Bochs', 'KVM', 'QEMU',
                                         'Microsoft Corporation', 'Xen', 'innotek GmbH']:
                         dev_type = 'virtual'
-                        self.devargs.update({'type': dev_type})
+                        if self.ignore_virtual_machines and dev_type == 'virtual':
+                            self.devargs.clear()
+                            return 'virtual'
+                        else:
+                            self.devargs.update({'type': dev_type})
                 if 'product_uuid:' in rec:
                     uuid = rec.split(':')[1].strip()
                     self.devargs.update({'uuid': uuid})
                 if 'product_serial:' in rec:
                     serial = rec.split(':')[1].strip()
-                    self.devargs.update({'serial_no': serial})
+                    if self.get_serial_info:
+                        self.devargs.update({'serial_no': serial})
                 if 'product_name:' in rec and dev_type != 'virtual':
                     hardware = rec.split(':')[1].strip()
                     self.devargs.update({'hardware': hardware})
@@ -204,7 +286,10 @@ class GetLinuxData:
             self.get_system_3()
 
     def get_system_3(self):
-        cmd = "lshal -l -u computer"
+        if 'lshal' in self.paths:
+            cmd = "%s/lshal -l -u computer" % self.paths['lshal']
+        else:
+            cmd = "lshal -l -u computer"
         data_out, data_err = self.execute(cmd)
         if data_out:
             dev_type = None
@@ -215,13 +300,18 @@ class GetLinuxData:
                     if manufacturer in ['VMware, Inc.', 'Bochs', 'KVM', 'QEMU',
                                         'Microsoft Corporation', 'Xen', 'innotek GmbH']:
                         dev_type = 'virtual'
-                        self.devargs.update({'type': dev_type})
+                        if self.ignore_virtual_machines and dev_type == 'virtual':
+                            self.devargs.clear()
+                            return 'virtual'
+                        else:
+                            self.devargs.update({'type': dev_type})
                 if 'system.hardware.uuid' in rec:
                     uuid = rec.split('=')[1].split('(')[0].strip()
                     self.devargs.update({'uuid': uuid})
                 if 'system.hardware.serial' in rec:
                     serial = rec.split('=')[1].split('(')[0].strip()
-                    self.devargs.update({'serial_no': serial})
+                    if self.get_serial_info:
+                        self.devargs.update({'serial_no': serial})
                 if 'system.hardware.product' in rec and dev_type != 'virtual':
                     hardware = rec.split('=')[1].split('(')[0].strip()
                     self.devargs.update({'hardware': hardware})
@@ -231,7 +321,10 @@ class GetLinuxData:
                       (self.machine_name, str(data_err))
 
     def get_ram(self):
-        cmd = 'grep MemTotal /proc/meminfo'
+        if 'grep' in self.paths:
+            cmd = '%s/grep MemTotal /proc/meminfo' % self.paths['grep']
+        else:
+            cmd = 'grep MemTotal /proc/meminfo'
         data_out, data_err = self.execute(cmd)
         if not data_err:
             memory_raw = ''.join(data_out).split()[1]
@@ -242,7 +335,11 @@ class GetLinuxData:
                 print '\t[-] Could not get RAM info from host %s. Message was: %s' % (self.machine_name, str(data_err))
 
     def get_os(self):
-        cmd = 'python -c "import platform; raw = list(platform.dist());raw.append(platform.release());print raw"'
+        if 'python2' in self.paths:
+            cmd = '%s/python -c "import platform; raw = list(platform.dist());raw.append(platform.release());print raw"'\
+                  % self.paths['python2']
+        else:
+            cmd = 'python -c "import platform; raw = list(platform.dist());raw.append(platform.release());print raw"'
         data_out, data_err = self.execute(cmd)
         if not data_err:
             if 'command not found' not in data_out[0]:  # because some distros sport python3 by default!
@@ -250,8 +347,13 @@ class GetLinuxData:
                 self.devargs.update({'os': self.os})
                 self.devargs.update({'osver': ver})
                 self.devargs.update({'osverno': kernel_version})
+                return
             else:
-                cmd = 'python3 -c "import platform; raw = list(platform.dist());' \
+                if 'python3' in self.paths:
+                    cmd = '%s/python3 -c "import platform; raw = list(platform.dist());raw.append(platform.release());' \
+                          'print (raw)"' % self.paths['python3']
+                else:
+                    cmd = 'python3 -c "import platform; raw = list(platform.dist());' \
                       'raw.append(platform.release());print (raw)"'
                 data_out, data_err = self.execute(cmd)
                 if not data_err:
@@ -259,37 +361,48 @@ class GetLinuxData:
                     self.devargs.update({'os': self.os})
                     self.devargs.update({'osver': ver})
                     self.devargs.update({'osverno': kernel_version})
+                    return
                 else:
                     if self.debug:
                         print '\t[-] Could not get OS info from host %s. Message was: %s' % (
                             self.machine_name, str(data_err))
-
+        if data_err and 'command not found' in data_err[0]:
+            if 'python3' in self.paths:
+                cmd = '%s/python3 -c "import platform; raw = list(platform.dist());' \
+                        'raw.append(platform.release());print (raw)"' % self.paths['python3']
+            else:
+                cmd = 'python3 -c "import platform; raw = list(platform.dist());' \
+                        'raw.append(platform.release());print (raw)"'
+            data_out, data_err = self.execute(cmd)
+            if not data_err:
+                self.os, ver, release, kernel_version = ast.literal_eval(data_out[0])
+                self.devargs.update({'os': self.os})
+                self.devargs.update({'osver': ver})
+                self.devargs.update({'osverno': kernel_version})
+                return
+            else:
+                if self.debug:
+                    print '\t[-] Could not get OS info from host %s. Message was: %s' % (
+                        self.machine_name, str(data_err))
         else:
             if self.debug:
                 print '\t[-] Could not get OS info from host %s. Message was: %s' % (self.machine_name, str(data_err))
 
     def get_cpu(self):
-        cmd = 'cat /proc/cpuinfo'
+        processors = self.get_cpu_num()
+        if 'cat' in self.paths:
+            cmd = '%s/cat /proc/cpuinfo' % self.paths['cat']
+        else:
+            cmd = 'cat /proc/cpuinfo'
         data_out, data_err = self.execute(cmd)
         if not data_err:
-            cpus = 0
             cores = 1
-            siblings = None
             cpuspeed = 0
-            threads = None
             for rec in data_out:
-                if rec.startswith('processor'):
-                    cpus += 1
                 if rec.startswith('cpu MHz'):
                     cpuspeed = int((float(rec.split(':')[1].strip())))
                 if rec.startswith('cpu cores'):
                     cores = int(rec.split(':')[1].strip())
-                if rec.startswith('siblings'):
-                    threads = int(rec.split(':')[1].strip())
-            if siblings and threads:
-                processors = cpus / threads
-            else:
-                processors = cpus
             self.devargs.update({'cpucount': processors})
             self.devargs.update({'cpucore': cores})
             self.devargs.update({'cpupower': cpuspeed})
@@ -298,8 +411,37 @@ class GetLinuxData:
             if self.debug:
                 print '\t[-] Could not get CPU info from host %s. Message was: %s' % (self.machine_name, str(data_err))
 
+    def get_cpu_num(self):
+        if 'cat' in self.paths:
+            cat_path = self.paths['cat'] + '/cat'
+        else:
+            cat_path = 'cat'
+        if 'grep' in self.paths:
+            grep_path = self.paths['grep'] + '/grep'
+        else:
+            grep_path = 'grep'
+        if 'sort' in self.paths:
+            sort_path = self.paths['sort'] + '/sort'
+        else:
+            sort_path = 'sort'
+        if 'wc' in self.paths:
+            wc_path = self.paths['wc'] + '/wc'
+        else:
+            wc_path = 'wc'
+
+        cmd = '%s /proc/cpuinfo | %s "physical id" | %s -u | %s -l' % (cat_path, grep_path, sort_path, wc_path)
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            cpu_num = ''.join(data_out).strip()
+            return cpu_num
+        else:
+            return 0
+
     def get_ip_ifconfig(self):
-        cmd = '/sbin/ifconfig'
+        if 'ifconfig' in self.paths:
+            cmd = '%s/ifconfig'
+        else:
+            cmd = '/sbin/ifconfig'
         data_out, data_err = self.execute(cmd)
         if not data_err:
             new = True
@@ -382,7 +524,10 @@ class GetLinuxData:
             self.alldata.append(macdata)
 
     def get_ip_ipaddr(self):
-        cmd = 'ip addr show'
+        if 'ip' in self.paths:
+            cmd = '%s/ip addr show' % self.paths['ip']
+        else:
+            cmd = 'ip addr show'
         data_out, data_err = self.execute(cmd)
         if not data_err and 'command not found' not in data_out[0]:
             macmap = {}
@@ -399,6 +544,8 @@ class GetLinuxData:
                         raw = rec.split(':')
                         try:
                             nic = raw[1].strip()
+                            if '@' in nic:
+                                nic = nic.split('@')[0]
                             current_nic = nic
                             rec_index = data_out.index(rec)
                             mac_word = data_out[rec_index + 1]
@@ -406,6 +553,9 @@ class GetLinuxData:
                                 _, mac, _, _ = mac_word.split()
                             if nic != 'lo' and mac:
                                 macmap.update({nic: mac})
+                                if self.add_nic_as_parts:
+                                    if nic in self.nic_parts:
+                                        self.nic_parts[nic]["serial_no"]=mac
                         except IndexError:
                             pass
                 # get nic names and ips
@@ -467,20 +617,27 @@ class GetLinuxData:
             self.get_ip_ifconfig()
 
     def get_hdd(self):
-        # get software raids. Hardware raids are way too complicated to fetch automatically.
-        self.get_sw_raids()
-        # ==================
-
         hdds = self.get_hdd_names()
-        if hdds:
-            if self.add_hdd_as_devp:
-                self.devargs.update({'hddcount': len(hdds)})
-            for hdd in hdds:
-                self.get_hdd_info(hdd)
+        hw_hdds = [x for x in hdds if '/mapper' not in x]
+        if hw_hdds:
+            if self.add_hdd_as_devp :
+                self.devargs.update({'hddcount': len(hw_hdds)})
+            for hdd in hw_hdds:
+                hdd_part = self.get_hdd_info_hdaparm(hdd)
+                if hdd_part:
+                    self.hdd_parts.append(hdd_part)
 
     def get_hdd_names(self):
+        if 'fdisk' in self.paths:
+            fdisk_path = self.paths['fdisk'] + '/fdisk'
+        else:
+            fdisk_path = 'fdisk'
+        if 'grep' in self.paths:
+            grep_path = self.paths['grep'] + '/grep'
+        else:
+            grep_path = 'grep'
         hdd_names = []
-        cmd = '/sbin/fdisk -l | grep "Disk /dev"'
+        cmd = '%s -l | %s -v "ram\|mapper" | %s "Disk /dev"' % (fdisk_path, grep_path, grep_path)
         data_out, data_err = self.execute(cmd, True)
         errhdds = []
         if data_err:
@@ -507,35 +664,34 @@ class GetLinuxData:
                         self.devargs.update({'hddsize': size})
                 hdd_names.append(disk_name)
                 self.disk_sizes.update({disk_name: size})
-            except Exception, e:
+            except Exception as e:
                 print e
-                pass
+
         return hdd_names
 
-    def get_hdd_info(self, hdd):
-        pass
-
     def get_hdd_info_hdaparm(self, hdd):
-        # if hdd not in self.raids:
-        cmd = 'hdparm -I %s' % hdd
+        if 'hdparm' in self.paths:
+            cmd = '%s/hdparm -I %s' % (self.paths['hdparm'], hdd)
+        else:
+            cmd = 'hdparm -I %s' % hdd
         data_out, data_err = self.execute(cmd, True)
         if data_err:
+            if self.debug:
+                print '[-] Error in get_hdd_info_hdaparm() for IP: %s . Message was: %s' % (self.machine_name, data_err)
             return
         else:
+            hdd_part = {}
             for rec in data_out:
                 if 'model number' in rec.lower():
                     model = rec.split(':')[1].strip()
                     size = self.disk_sizes[hdd]
-                    self.hdd_parts.update({'device': self.device_name})
-                    self.hdd_parts.update({'name': model})
-                    self.hdd_parts.update({'type': 'hdd'})
-                    self.hdd_parts.update({'hddsize': size})
+                    hdd_part.update({'device': self.device_name, 'assignment': 'device'})
+                    hdd_part.update({'name': model})
+                    hdd_part.update({'type': 'hdd'})
+                    hdd_part.update({'hddsize': size})
                 if 'serial number' in rec.lower():
                     serial = rec.split(':')[1].strip()
-                    self.hdd_parts.update({'serial_no': serial})
-                if 'rotation rate' in rec.lower():
-                    rpm = rec.split(':')[1].strip()
-                    self.hdd_parts.update({'hddrpm': rpm})
+                    hdd_part.update({'serial_no': serial})
                 if 'transport:' in rec.lower():
                     if ',' in rec:
                         try:
@@ -544,38 +700,93 @@ class GetLinuxData:
                             transport = (rec.split(',')[-1])
                     else:
                         transport = rec.lower()
-                    self.hdd_parts.update({'hddtype': transport})
+                    hdd_part.update({'hddtype': transport})
+                if 'rotation rate' in rec.lower():
+                    rpm = rec.split(':')[1].strip()
+                    if not rpm == 'Solid State Device':
+                        hdd_part.update({'hddrpm': rpm})
+                    else:
+                        hdd_part.update({'hddtype': 'SSD'})
+            return hdd_part
 
-    def get_sw_raids(self):
-        cmd = 'cat /proc/mdstat'
-        # Note:  we can get raid members here if needed!
-        data_out, data_err = self.execute(cmd, False)
-        if not data_err:
-            for rec in data_out:
-                if "active raid" in rec:
-                    hddraid = 'software'
-                    raw = rec.split()
-                    for entry in raw:
-                        if 'raid' in entry:
-                            rtype = entry.strip()
-                            hddraid_type = self.raid_type(rtype)
-                            if self.add_hdd_as_devp:
-                                self.devargs.update({'hddraid': hddraid})
-                                self.devargs.update({'hddraid_type': hddraid_type})
-                            if self.add_hdd_as_parts:
-                                self.hdd_parts.update({'raid_type': hddraid_type})
-
-    @staticmethod
-    def raid_type(rtype):
-        types = {'raido': 'raid 0',
-                 'raid1': 'raid 1',
-                 'raid3': 'raid 3',
-                 'raid4': 'raid 4',
-                 'raid5': 'raid 5',
-                 'raid6': 'raid 6',
-                 'raid10': 'raid 10',
-                 'raid50': 'raid 50'}
-        if rtype in types:
-            return types[rtype]
+    def get_physical_nics(self):
+        if 'find' in self.paths:
+            cmd = "%s/find /sys/devices/pci0000:00 -name net -exec ls '{}' \; -exec dirname '{}' \;" % self.paths['find']
         else:
-            return rtype
+            cmd = "find /sys/devices/pci0000:00 -name net -exec ls '{}' \; -exec dirname '{}' \;"
+        nics = {}
+        device_name = self.get_name()
+
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            for i in range(0, len(data_out), 2):
+                nic = data_out[i].strip()
+                path = self.check_nic_path(data_out[i + 1].strip())
+                vendor_code = self.get_nic_vendor_code(path)
+                vendor_subcode = self.get_nic_vendor_subcode(path)
+                model_code = self.get_nic_model_code(path)
+                model_subcode = self.get_nic_model_subcode(path)
+                nics.update({nic:{"manufacturer":vendor_code,
+                                  "name": model_code,
+                                  "serial_no": None,
+                                  "device": device_name,
+                                  "model_subcode": model_subcode,
+                                  "manufacturer_subcode": vendor_subcode}})
+        else:
+            if self.debug:
+                print '[!] Error in get_physical_nics(). Message was: %s' % data_err
+
+        return nics
+
+    def check_nic_path(self, path):
+        path_parts = os.path.split(path)
+        # ssb patch
+        try:
+            if 'ssb' in path_parts[-1]:
+                new_path = '/'.join(path_parts[0:-1])
+                return new_path
+            else:
+                return path
+        except Exception as e:
+            print e
+
+    def get_nic_vendor_code(self, path):
+        if 'cat' in self.paths:
+            cmd = "%s/cat %s/vendor" % (self.paths['cat'],path)
+        else:
+            cmd = "cat %s/vendor" % path
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            vendor_code = ''.join(data_out).strip()[2:]
+            return vendor_code
+
+    def get_nic_vendor_subcode(self, path):
+        if 'cat' in self.paths:
+            cmd = "%s/cat %s/subsystem_vendor" % (self.paths['cat'],path)
+        else:
+            cmd = "cat %s/subsystem_vendor" % path
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            vendor_subcode = ''.join(data_out).strip()[2:]
+            return vendor_subcode
+
+    def get_nic_model_code(self, path):
+        if 'cat' in self.paths:
+            cmd = "%s/cat %s/device" % (self.paths['cat'],path)
+        else:
+            cmd = "cat %s/device" % path
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            model_code = ''.join(data_out).strip()[2:]
+            return model_code
+
+    def get_nic_model_subcode(self, path):
+        if 'cat' in self.paths:
+            cmd = "%s/cat %s/subsystem_device" % (self.paths['cat'],path)
+        else:
+            cmd = "cat %s/subsystem_device" % path
+        data_out, data_err = self.execute(cmd)
+        if not data_err:
+            sub_code = ''.join(data_out).strip()[2:]
+            return sub_code
+

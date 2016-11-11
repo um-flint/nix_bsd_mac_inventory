@@ -23,9 +23,12 @@ class Rest:
             'Content-Type': 'application/x-www-form-urlencoded'
         }
 
-    def uploader(self, data, url):
+    def uploader(self, data, url, method=None):
         payload = data
-        r = requests.post(url, data=payload, headers=self.headers, verify=False)
+        if method == 'put':
+            r = requests.put(url, data=payload, headers=self.headers, verify=False)
+        else:
+            r = requests.post(url, data=payload, headers=self.headers, verify=False)
         msg = unicode(payload)
         if self.debug:
             print msg
@@ -58,6 +61,16 @@ class Rest:
             return r.json()
         else:
             return status_code
+
+    def put_device(self, data):
+        if not DRY_RUN:
+            url = self.base_url + '/api/1.0/device/'
+            msg = '\r\nUpdating device by mac %s ' % url
+            if self.debug:
+                print msg
+            method = 'put'
+            result, scode = self.uploader(data, url, method)
+            return result, scode
 
     def post_device(self, data):
         if not DRY_RUN:
@@ -93,10 +106,10 @@ class Rest:
                 print msg
             self.uploader(data, url)
 
-    def post_parts(self, data):
+    def post_parts(self, data, category):
         if not DRY_RUN:
             url = self.base_url + '/api/1.0/parts/'
-            msg = '\r\nPosting HDD parts to %s ' % url
+            msg = '\r\nPosting %s parts to %s ' % (category, url)
             if self.debug:
                 print msg
             self.uploader(data, url)
@@ -123,3 +136,18 @@ class Rest:
             for ip_id in ip_ids:
                 url = self.base_url + '/api/1.0/ips/%s' % ip_id
                 self.deleter(url)
+
+    def get_device_by_mac(self, mac):
+        if not DRY_RUN:
+            url = self.base_url + '/api/1.0/macs/?mac=%s' % mac
+            msg = '\r\nFind device by mac:  %s ' % mac
+            if self.debug:
+                print msg
+            response = self.fetcher(url)
+            if isinstance(response, dict) and 'macaddresses' in response:
+                dev_id = [x['device']['device_id'] for x in response['macaddresses'] if 'device' in x]
+                if dev_id:
+                    try:
+                        return dev_id[0]
+                    except:
+                        pass
