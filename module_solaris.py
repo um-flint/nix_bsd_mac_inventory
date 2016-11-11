@@ -105,16 +105,12 @@ class GetSolarisData:
         data_err = stderr.readlines()
         if not data_err:
             for rec in data_out[1:]:
-                #make sure that we only get macs that have been assigned to an interface otherwise rec.split will fail
-                if not rec.startswith(' '):
-                    nic, slot, address, in_use, client = rec.split()
-                    # dladm returns MACs in wrong format
-                    if address:
-                        raw = address.split(':')
-                        address = ':'.join([x if len(x) == 2 else ('0' + x) for x in raw])
-                    #filter out the column description if it appears again
-                    if nic != "LINK":
-                        macs.update({nic: address})
+                nic, slot, address, in_use, client = rec.split()
+                # dladm returns MACs in wrong format
+                if address:
+                    raw = address.split(':')
+                    address = ':'.join([x if len(x) == 2 else ('0' + x) for x in raw])
+                macs.update({nic: address})
             return macs
         else:
             stdin, stdout, stderr = self.ssh.exec_command("/usr/sbin/arp -a")
