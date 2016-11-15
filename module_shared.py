@@ -56,12 +56,13 @@ def get_settings():
     debug = cc.getboolean('options', 'debug')
     threads = cc.get('options', 'threads')
     dict_output = cc.getboolean('options', 'dict_output')
+    get_oracle_software = cc.getboolean('options', 'get_oracle_software')
 
     return mod_linux, mod_solaris, mod_mac, mod_bsd, mod_aix, mod_hpux, base_url, username, secret, targets, exclude_ips,\
         use_key_file, key_file, credentials, ssh_port, timeout, get_serial_info, duplicate_serials,\
         add_hdd_as_device_properties, add_hdd_as_parts, add_nic_as_parts, get_hardware_info, get_os_details, get_cpu_info,\
         get_memory_info, ignore_domain, ignore_virtual_machines, upload_ipv6, debug, threads, dict_output, \
-        give_hostname_precedence, mac_lookup, remove_stale_ips
+        give_hostname_precedence, mac_lookup, remove_stale_ips, get_oracle_software
 
 
 # noinspection PyProtectedMember
@@ -72,7 +73,7 @@ if caller == 'main.py':
         key_file, credentials, ssh_port, timeout, get_serial_info, duplicate_serials, add_hdd_as_device_properties,\
         add_hdd_as_parts, add_nic_as_parts, get_hardware_info, get_os_details, get_cpu_info, get_memory_info, ignore_domain,\
         ignore_virtual_machines, upload_ipv6, debug, THREADS, DICT_OUTPUT, give_hostname_precedence, mac_lookup, \
-        REMOVE_STALE_IPS = get_settings()
+        REMOVE_STALE_IPS, get_oracle_software = get_settings()
 
     ssh_port = int(ssh_port)
     timeout = int(timeout)
@@ -83,7 +84,7 @@ else:
             xuse_key_file, xkey_file, xcredentials, ssh_port, timeout, get_serial_info, duplicate_serials,\
             add_hdd_as_device_properties, add_hdd_as_parts, add_nic_as_parts, get_hardware_info, get_os_details, \
             get_cpu_info, get_memory_info, ignore_domain, ignore_virtual_machines, upload_ipv6, debug, THREADS, DICT_OUTPUT, \
-            give_hostname_precedence, mac_lookup, REMOVE_STALE_IPS = get_settings()
+            give_hostname_precedence, mac_lookup, REMOVE_STALE_IPS, get_oracle_software = get_settings()
 
         ssh_port = int(ssh_port)
         timeout = int(timeout)

@@ -65,3 +65,4 @@ dict_output        			= False
 add_hdd_as_device_properties= False 
 add_hdd_as_parts			= True
 add_nic_as_parts			= False
+get_oracle_software         = False
