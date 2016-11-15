@@ -114,6 +114,14 @@ class Rest:
                 print msg
             self.uploader(data, url)
 
+    def post_software(self, data):
+        if not DRY_RUN:
+            url = self.base_url + '/api/1.0/software_details/'
+            msg = '\r\nPosting software data to %s ' % (url)
+            if self.debug:
+                print msg
+            self.uploader(data, url)
+
     def get_device_by_name(self, name):
         if not DRY_RUN:
             url = self.base_url + '/api/1.0/devices/name/%s/?include_cols=ip_addresses' % name
