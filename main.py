@@ -61,6 +61,14 @@ def upload(data, os=None):
                 nic_parts = resolve_pci(rec)
             data.remove(rec)
 
+    # get oracle software if any
+    oracle_software = []
+    for rec in data:
+        if 'oracle_software' in rec:
+            for software in rec['oracle_software']:
+                oracle_software.append(software)
+            data.remove(rec)
+
     # Upload device first and get name back
     devindex = None
     for rec in data:
@@ -125,6 +133,11 @@ def upload(data, os=None):
     if nic_parts:
         for part in nic_parts:
             rest.post_parts(part, 'NIC')
+
+    # upload oracle_software if any
+    if oracle_software:
+        for software in oracle_software:
+            rest.post_software(software)
 
 def resolve_pci(raw):
     """ Find manufacturer name and put all of its models and sub-models in the tmp var.
@@ -199,7 +212,7 @@ def get_linux_data(ip, usr, pwd):
         linux = ml.GetLinuxData(base_url, username, secret, ip, ssh_port, timeout, usr, pwd, use_key_file, key_file,
                                 get_serial_info, add_hdd_as_device_properties, add_hdd_as_parts, add_nic_as_parts,
                                 get_hardware_info, get_os_details, get_cpu_info, get_memory_info,
-                                ignore_domain, ignore_virtual_machines, upload_ipv6, give_hostname_precedence, debug)
+                                ignore_domain, ignore_virtual_machines, upload_ipv6, give_hostname_precedence, debug, get_oracle_software)
 
         data = linux.main()
         if debug:

@@ -1,8 +1,11 @@
 import os
 import ast
 import math
+from xml.dom import minidom
 
 import paramiko
+
+import module_oraclesw as oraclesw
 
 commands = ['cat /dev/null',
             'dmidecode -V',
@@ -26,7 +29,7 @@ class GetLinuxData:
     def __init__(self, base_url, username, secret, ip, ssh_port, timeout, usr, pwd, use_key_file, key_file,
                  get_serial_info, add_hdd_as_device_properties, add_hdd_as_parts, add_nic_as_parts,
                  get_hardware_info, get_os_details, get_cpu_info, get_memory_info,
-                 ignore_domain, ignore_virtual_machines, upload_ipv6, give_hostname_precedence, debug):
+                 ignore_domain, ignore_virtual_machines, upload_ipv6, give_hostname_precedence, debug, get_oracle_software):
 
         self.d42_api_url = base_url
         self.d42_username = username
@@ -51,6 +54,7 @@ class GetLinuxData:
         self.add_hdd_as_devp = False # do not edit, take a look at the inventory.config.example for details
         self.add_hdd_as_parts = add_hdd_as_parts
         self.add_nic_as_parts = add_nic_as_parts
+        self.get_oracle_software = get_oracle_software
         self.debug = debug
         self.root = True
         self.devicename = None
@@ -63,6 +67,7 @@ class GetLinuxData:
         self.paths = {}
 
         self.nics = []
+        self.oracle_software = []
         self.alldata = []
         self.devargs = {}
         self.ssh = paramiko.SSHClient()
@@ -91,6 +96,10 @@ class GetLinuxData:
             self.alldata.append({'hdd_parts': self.hdd_parts})
         if self.add_nic_as_parts:
             self.alldata.append({'nic_parts': self.nic_parts})
+        if self.get_oracle_software:
+            oracle_software = oraclesw.get_oraclesoftware(self)
+            self.alldata.append({'oracle_software': self.oracle_software})
+            
         return self.alldata
 
     def connect(self):
