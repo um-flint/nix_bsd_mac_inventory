@@ -2,13 +2,13 @@ from xml.dom import minidom
 # We don't execute any commands as root
 # Seemed more secure to assume the discovery user is a member of the oinstall group
 
-def get_oracle_inventory_loc(self,os=linux):
+def get_oracle_inventory_loc(self,os='linux'):
     inventory_loc = ''
 
     # These paths were taken from https://docs.oracle.com/cd/E18283_01/em.112/e12255/oui2_manage_oracle_homes.htm#CJAEHIGJ
     # Default to using Linux path
     inventory_pointer = '/etc/oraInst.loc'
-    if (os == 'solaris') or (os == 'aix') or (os == 'hpux')
+    if (os == 'solaris') or (os == 'aix') or (os == 'hpux'):
         inventory_pointer = '/var/opt/oracle/oraInst.loc'
 
     if 'grep' in self.paths:
@@ -22,40 +22,52 @@ def get_oracle_inventory_loc(self,os=linux):
     return inventory_loc
 
 def get_oracle_home_details(self, oracle_home):
-        oracle_software = {}
+        home_details = []
+        # Middleware 12c homes using OUI 13.x have a file named registry.xml
+        # Try to use this first to get the top level product
+        # Refer to Doc ID 1591483.1 for more info
         if 'grep' in self.paths:
-            cmd = "%s/cat %s/inventory/ContentsXML/comps.xml" % (self.paths['cat'], oracle_home)
+            cmd = "%s/cat %s/inventory/registry.xml" % (self.paths['cat'], oracle_home)
         else:
-            cmd = "cat %s/inventory/ContentsXML/comps.xml" % (oracle_home)
+            cmd = "cat %s/inventory/registry.xml" % (oracle_home)
         data_out, data_err = self.execute(cmd)
+
         if not data_err:
             xmldoc = minidom.parseString(''.join(data_out))
-            prd_list = xmldoc.getElementsByTagName('PRD_LIST')[0]
-            tl_list = prd_list.getElementsByTagName('TL_LIST')[0]
-            comps = tl_list.getElementsByTagName('COMP')
-            
-            #Most Oracle homes seem to have only 1 top level product - this makes sense
-            #However, I have seen some Enterprise Manager 13c Agent homes that have 50+
-            #Rather than pull in all of these components, look for the top level one used by Agent 12c
-            if len(comps) == 1:
-                component_name = comps[0].attributes['NAME'].value
-                component_version = comps[0].attributes['VER'].value
-                component_extended_name = comps[0].getElementsByTagName('EXT_NAME')[0].firstChild.data
-            else:
-                for comp in comps:
-                    component_name = comp.attributes['NAME'].value
-                    if component_name == 'oracle.sysman.top.agent':
-                        component_version = comp.attributes['VER'].value
-                        component_extended_name = comp.getElementsByTagName('EXT_NAME')[0].firstChild.data
-
-            oracle_software.update({'software': component_extended_name})
-            oracle_software.update({'vendor': 'Oracle Corporation'})
-            oracle_software.update({'version': component_version})
-            oracle_software.update({'device': self.device_name})
+            registry = xmldoc.getElementsByTagName('registry')[0]
+            distributions = registry.getElementsByTagName('distributions')[0]
+            for distribution in distributions.getElementsByTagName('distribution'):
+                oracle_software = {}
+                oracle_software.update({'software': distribution.attributes['name'].value})
+                oracle_software.update({'vendor': 'Oracle Corporation'})
+                oracle_software.update({'version': distribution.attributes['version'].value})
+                oracle_software.update({'device': self.device_name})
+                home_details.append(oracle_software)
         else:
-            print data_err
+            # comps.xml has only 1 top level product for 11g based middleware homes and database homes
+            # 12c database homes have only 1 top level product as well
+            # We don't want to use this for OUI 13.x based homes as there will be 50+ top level products
+            if 'grep' in self.paths:
+                cmd = "%s/cat %s/inventory/ContentsXML/comps.xml" % (self.paths['cat'], oracle_home)
+            else:
+                cmd = "cat %s/inventory/ContentsXML/comps.xml" % (oracle_home)
+            data_out, data_err = self.execute(cmd)
+            
+            if not data_err:
+                xmldoc = minidom.parseString(''.join(data_out))
+                prd_list = xmldoc.getElementsByTagName('PRD_LIST')[0]
+                tl_list = prd_list.getElementsByTagName('TL_LIST')[0]
+                comps = tl_list.getElementsByTagName('COMP')
+            
+                for comp in comps:
+                    oracle_software = {}
+                    oracle_software.update({'software': comp.getElementsByTagName('EXT_NAME')[0].firstChild.data})
+                    oracle_software.update({'vendor': 'Oracle Corporation'})
+                    oracle_software.update({'version': comp.attributes['VER'].value})
+                    oracle_software.update({'device': self.device_name})
+                    home_details.append(oracle_software)
 
-        return oracle_software
+        return home_details
 
 def get_oracle_homes(self, oracle_inventory_loc):
     oracle_homes = []
@@ -73,13 +85,9 @@ def get_oracle_homes(self, oracle_inventory_loc):
         for home in homes:
             loc = home.attributes['LOC'].value
 
-            # If an Oracle Home is uninstalled / removed it is not deleted from the inventory
+            # If an Oracle Home is uninstalled / removed it is not deleted from the inventory file
             # The REMOVED attribute added and set to 'T'
-            if home.hasAttribute('REMOVED'):
-                removed = home.attributes['REMOVED']
-                if removed.value == 'F':
-                    oracle_homes.append(loc)
-            else:
+            if home.hasAttribute('REMOVED') == False:
                 oracle_homes.append(loc)
 
     return oracle_homes
@@ -92,10 +100,14 @@ def get_oraclesoftware(self):
         oracle_homes = get_oracle_homes(self,oracle_inventory_loc)
         if oracle_homes is not []:
             for oracle_home in oracle_homes:
-                self.oracle_software.append(get_oracle_home_details(self,oracle_home))
+                if self.debug:
+                    print 'Processing Oracle Home ' + oracle_home
+                for home_detail in get_oracle_home_details(self,oracle_home):
+                    self.oracle_software.append(home_detail)
         else:
-            print 'No homes found in the Oracle Central Inventory!'
+            if self.debug:
+                print 'No homes found in the Oracle Central Inventory on ' + self.device_name
     else:
-        print 'Could not find Oracle Central Inventory!'
-
+        if self.debug:
+            print 'Could not find Oracle Central Inventory on ' + self.device_name
     return oracle_software
