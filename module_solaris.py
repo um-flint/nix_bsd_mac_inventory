@@ -1,10 +1,11 @@
 import paramiko
 
+import module_oraclesw as oraclesw
 
 class GetSolarisData:
     def __init__(self, ip, ssh_port, timeout, usr, pwd, use_key_file, key_file,
                  get_serial_info, get_hardware_info, get_os_details, add_hdd_as_parts,
-                 get_cpu_info, get_memory_info, ignore_domain, upload_ipv6, debug):
+                 get_cpu_info, get_memory_info, ignore_domain, upload_ipv6, debug, get_oracle_software):
         self.machine_name = ip
         self.port = int(ssh_port)
         self.timeout = timeout
@@ -17,6 +18,7 @@ class GetSolarisData:
         self.get_hardware_info = get_hardware_info
         self.get_os_details = get_os_details
         self.add_hdd_as_parts = add_hdd_as_parts
+        self.get_oracle_software = get_oracle_software
         self.get_cpu_info = get_cpu_info
         self.get_memory_info = get_memory_info
         self.ignore_domain = ignore_domain
@@ -28,6 +30,7 @@ class GetSolarisData:
         self.sysdata = {}
         self.alldata = []
         self.hdd_parts = []
+        self.oracle_software = []
 
     def main(self):
         self.connect()
@@ -39,6 +42,9 @@ class GetSolarisData:
         if self.add_hdd_as_parts:
             self.alldata.append({'hdd_parts': self.hdd_parts})
         self.get_hdd()
+        if self.get_oracle_software:
+            oracle_software = oraclesw.get_oraclesoftware(self,os='solaris')
+            self.alldata.append({'oracle_software': self.oracle_software})
         return self.alldata
 
     def connect(self):
