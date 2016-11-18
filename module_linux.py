@@ -96,7 +96,7 @@ class GetLinuxData:
         if self.add_nic_as_parts:
             self.alldata.append({'nic_parts': self.nic_parts})
         if self.get_oracle_software:
-            oracle_software = oraclesw.get_oraclesoftware(self)
+            oraclesw.get_oraclesoftware(self)
             self.alldata.append({'oracle_software': self.oracle_software})
             
         return self.alldata
